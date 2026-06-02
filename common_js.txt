@@ -1,0 +1,51 @@
+var PORTAL;
+(function (PORTAL) {
+    var Common = /** @class */ (function () {
+        function Common() {
+
+        }
+
+        Common.isDevEnvironment = true;
+
+        Common.getUrlPrefix = function () {
+            if (multiTenancyIsEnabled) {
+                let tenant = Common.isDevEnvironment ? window.location.pathname.split('/')[1] : window.location.pathname.split('/')[2];
+                return Common.isDevEnvironment ? ("/" + tenant) : ("/a/" + tenant);
+            }
+
+            return Common.isDevEnvironment ? "" : "/a";
+        }
+
+        Common.urlPrefix = Common.getUrlPrefix();
+        
+        Common.API = {
+            LOGIN: Common.urlPrefix + "/Account/Login",
+            LOGOFF: Common.urlPrefix + "/Account/LogOff",
+            RESETPASSWORD: Common.urlPrefix + "/Account/ResetPassword",
+            GET_SIDE_NAVIGATION: Common.urlPrefix + "/home/LoadSideNavigation",
+            GET_ASSESSMENTS: Common.urlPrefix + "/assessments/GetAssessments",
+            GET_LOGS: Common.urlPrefix + "/logs/GetLogs",
+            GET_PATIENTS: Common.urlPrefix + "/patients/GetPatients",
+            GET_PATIENT_WITH_ORG_CORRECTIONS: Common.urlPrefix + "/patients/GetPatientWithOrgCorrections",
+            GET_USERS: Common.urlPrefix + "/users/GetUsers",
+            LAUNCH_ASAM: Common.urlPrefix + "/Patients/LaunchAsam",
+            GET_USER_EDITOR: Common.urlPrefix + "/Users/GetUserEditor",
+            GET_PATIENT_EDITOR: Common.urlPrefix + "/Patients/GetPatientEditor",
+            GET_ASSESSMENT_SUMMARY: Common.urlPrefix + "/Assessments/GetAssessmentSummary",
+            GET_ASSESSMENT_SCORE: Common.urlPrefix + "/Assessments/GetAssessmentScore",
+            GET_Organizations: Common.urlPrefix + "/Organizations/Get",
+            GET_Organization_EDITOR: Common.urlPrefix + "/Organizations/GetOrganizationEditor",
+            GET_TENANTS: Common.urlPrefix + "/Tenants/GetTenants",
+            GET_TENANT_EDITOR: Common.urlPrefix + "/Tenants/GetTenantEditor",
+            VERIFY_2FA: "/verify",
+        }
+
+        Common.URL = {
+            HOME_PAGE: Common.urlPrefix + "/"
+        }
+
+        return Common;
+    }());
+    PORTAL.Common = Common;
+})(PORTAL || (PORTAL = {}));
+var Common = PORTAL.Common;

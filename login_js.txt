@@ -1,0 +1,81 @@
+var PORTAL;
+(function (PORTAL) {
+    var Login = (function () {
+        function Login() {
+
+        }
+
+        Login.authenticateUser = function () {
+            $("form[name='frm-login']").validate({
+                rules: {
+                    email: {
+                        required: true,
+                        email: true
+                    },
+                    password: "required"
+                },
+                messages: {
+                    email: {
+                        required: "Please enter your Email"
+                    },
+                    password: {
+                        required: "Please enter your Password"
+                    }
+                },
+                submitHandler: function (form) {
+                    var loginRequest = {
+                        email: $("#email").val(),
+                        password: $("#password").val()
+                    };
+                    $.post(PORTAL.Common.API.LOGIN, loginRequest, function (data, status) {
+                        $("#invalid-login-msg").hide();
+                        $("#auth-error").hide();
+                        if (data.requires2FA) {
+                            // show modal
+                            $("#auth-code-modal").modal("show");
+                        } else {
+                            window.location.href = data.redirectToPasswordReset
+                                ? PORTAL.Common.API.RESETPASSWORD
+                                : PORTAL.Common.URL.HOME_PAGE;
+                        }
+                    }).fail(function (xhr, status, error) {
+                        $("#invalid-login-msg").show();
+                    });
+                }
+            });
+        }
+
+        Login.bindEvents = function () {
+            $("#btn-verify-code").click(function () {
+                var code = $("#auth-code").val();
+                $.post(PORTAL.Common.API.VERIFY_2FA, {
+                    email: $("#email").val(),
+                    authenticateCode: code
+                }, function (res) {
+                    if (res.success) {
+                        window.location.href = PORTAL.Common.URL.HOME_PAGE;
+                    } else {
+                        $("#auth-error").show();
+                    }
+                });
+            });
+        };
+
+        //For focus on the Code Verification textbox
+        $("#auth-code-modal").on("shown.bs.modal", function () {
+            $("#auth-code").trigger('focus');
+        });
+
+        //On click of ENTER button the Code Verification popup should get submitted
+        $("#auth-code").on("keydown", function (e) {
+            if (e.key === "Enter" || e.keyCode === 13) {
+                e.preventDefault();
+                $("#btn-verify-code").click();
+            }
+        });
+
+        return Login;
+    }());
+    PORTAL.Login = Login;
+})(PORTAL || (PORTAL = {}));
+var Login = PORTAL.Login;

@@ -1,0 +1,22 @@
+using ASAM.Common.Models;
+using ASAM.Domain.Entities.ASAM.Launch;
+using ASAM.Domain.Entities.ASAM.Launch.DataTable;
+using ASAM.Domain.Entities.ASAM.Launch.Identity;
+using ASAM.Domain.Enums;
+using System;
+using System.Threading.Tasks;
+
+namespace ASAM.Common.Interfaces
+{
+    public interface IUserService
+    {
+        public Task<RequestResult<int>> AddUser(string firstName, string lastName, string email, string mobileNumber, Role role, string password, int? tenantId, Guid? organizationId = null);
+        public Task<RequestResult<int>> UpdateUser(int userId, string firstName, string lastName, string password, string mobileNumber);
+        public DataTableResponse<User> GetUsers(DataTableRequest request, Guid? organizationId, string tenantIdentifier);
+        public User GetUser(int userId);
+        public User GetUser(string email);
+        public Role GetRole(string identity);
+        public Task SendAuthenticationCode(User user, AsamIdentityUser identityUser);
+        public Task<RequestResult<int>> ValidateAuthenticationCode(int code, int userId);
+    }
+}

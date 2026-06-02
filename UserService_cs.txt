@@ -1,0 +1,239 @@
+using ASAM.Common.Extensions;
+using ASAM.Common.Interfaces;
+using ASAM.Common.Models;
+using ASAM.Domain.Entities.ASAM.Launch;
+using ASAM.Domain.Entities.ASAM.Launch.DataTable;
+using ASAM.Domain.Entities.ASAM.Launch.Identity;
+using ASAM.Domain.Enums;
+using ASAM.Persistence;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+using Twilio;
+using Twilio.Rest.Api.V2010.Account;
+using Twilio.Types;
+
+namespace ASAM.Common.Services
+{
+    public class UserService : IUserService
+    {
+        private const string DUMMY_PASSWORD = "DUMMY_PASSWORD";
+        private const string US_COUNTRY_CODE = "+1";
+
+        private ASAMDbContext _dbContext { get; set; }
+        private UserManager<AsamIdentityUser> _userManager;
+        private RoleManager<IdentityRole> _roleManager;
+        private readonly ILogger _logger;
+        private readonly IOptions<TwilioOptions> _twilioOptions;
+        public UserService(ASAMDbContext dbContext, UserManager<AsamIdentityUser> userManager, RoleManager<IdentityRole> roleManager, ILogger<UserService> logger,
+            IOptions<TwilioOptions> twilioOptions)
+        {
+            _dbContext = dbContext;
+            _userManager = userManager;
+            _roleManager = roleManager;
+            _logger = logger;
+            _twilioOptions = twilioOptions;
+        }
+
+        private async Task<bool> SaveUserIdentity(User user, string mobileNumber, string password)
+        {
+            var userIdentity = new AsamIdentityUser
+            {
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Email = user.Email,
+                UserName = user.Email,
+                PhoneNumber = mobileNumber != "" ? mobileNumber : null
+            };
+            var result = await _userManager.CreateAsync(userIdentity, password);
+
+            if (result.Succeeded)
+            {
+                bool roleExists = await _roleManager.RoleExistsAsync(user.Role.ToString());
+
+                if (!roleExists)
+                    await _roleManager.CreateAsync(new IdentityRole(user.Role.ToString()));
+
+                await _userManager.AddToRoleAsync(userIdentity, user.Role.ToString());
+            }
+
+            return result.Succeeded;
+        }
+
+        public async Task<RequestResult<int>> AddUser(string firstName, string lastName, string email, string mobileNumber, Role role, string password, int? tenantId, Guid? organizationId = null)
+        {
+
+            var result = new RequestResult<int>();
+
+            if (role == Role.Provider && organizationId == null)
+            {
+                result.AddError($"Organization is required for a Provider");
+                return result;
+            }
+
+            if (_dbContext.Users.Any(p => p.FirstName == firstName && p.LastName == lastName))
+            {
+                result.AddError($"User {firstName} {lastName} already exists");
+                return result;
+            }
+
+            if (_dbContext.Users.Any(p => p.Email == email))
+            {
+                result.AddError($"{email} already exists");
+                return result;
+            }
+
+            var user = new User(firstName, lastName, email, role, tenantId, organizationId);
+            var identitySaved = await SaveUserIdentity(user, mobileNumber, password);
+
+            if (identitySaved)
+            {
+                _dbContext.Users.Add(user);
+                _dbContext.SaveChanges();
+            }
+            result.Id = user.Id;
+
+            return result;
+        }
+
+        public async Task<RequestResult<int>> UpdateUser(int userId, string firstName, string lastName, string password, string mobileNumber)
+        {
+            var result = new RequestResult<int>();
+
+            if (_dbContext.Users.Any(p => p.Id != userId && p.FirstName == firstName && p.LastName == lastName))
+            {
+                result.AddError($"User {firstName} {lastName} already exists");
+                return result;
+            }
+
+            var user = _dbContext.Users.FirstOrDefault(u => u.Id == userId);
+            user.Update(firstName, lastName);
+            _dbContext.Users.Update(user);
+            result.Id = await _dbContext.SaveChangesAsync();
+
+            var identityUser = await _userManager.FindByEmailAsync(user.Email);
+            if (identityUser != null)
+            {
+               await _userManager.SetPhoneNumberAsync(identityUser, mobileNumber);
+            }
+
+            if (password != DUMMY_PASSWORD)
+            {
+                var iu = await _userManager.FindByNameAsync(user.Email);
+                var token = await _userManager.GeneratePasswordResetTokenAsync(iu);
+                var resetResult = await _userManager.ResetPasswordAsync(iu, token, password);
+            }
+
+            return result;
+        }
+
+        public DataTableResponse<User> GetUsers(DataTableRequest request, Guid? organizationId, string tenantIdentifier)
+        {
+            var query = _dbContext.Users.Where(p => p.IsActive)
+                        .Where(u => u.Tenant.Identifier == tenantIdentifier)
+                        .Include(o => o.Organization)
+                        .Include(u => u.Tenant)
+                        .AsQueryable();
+
+            query = query.FilterOrganizations(organizationId);
+
+            if (request.Search != null)
+                query = query.Filter(request.Search.Value);
+
+            var column = request.SortColumn ?? nameof(User.CreatedOn);
+            var order = string.IsNullOrWhiteSpace(request.SortOrder) ? "asc" : request.SortOrder;
+
+            query = query.Sort(column, order);
+
+            var totalCount = query.Count();
+            query = query.Skip((request.Page - 1) * request.PageSize).Take(request.PageSize);
+            var users = query.ToList();
+
+            return new DataTableResponse<User>
+            {
+                Draw = request.Draw,
+                RecordsTotal = totalCount,
+                RecordsFiltered = totalCount,
+                Data = users
+            };
+        }
+
+        public User GetUser(int userId)
+        {
+            return _dbContext.Users.Where(u => u.Id == userId).Include(u => u.Organization).FirstOrDefault();
+        }
+
+        public User GetUser(string email)
+        {
+            return _dbContext.Users.Where(u => u.Email == email).Include(u => u.Organization).Include(u => u.Tenant).FirstOrDefault();
+        }
+
+        public Role GetRole(string identity)
+        {
+            return _dbContext.Users.Where(u => u.Email == identity).FirstOrDefault().Role;
+        }
+
+        public async Task SendAuthenticationCode(User user, AsamIdentityUser identityUser)
+        {
+            var generator = new Random();
+            var code = generator.Next(0, 1000000).ToString("D6");
+            await SendAuthenticationCode(user, identityUser, Convert.ToInt32(code));
+        }
+
+        public async Task<RequestResult<int>> SendAuthenticationCode(User user, AsamIdentityUser identityUser, int code)
+        {
+            var result = new RequestResult<int>();
+
+            if (user == null)
+            {
+                result.Errors.Add("User not found.");
+                result.Id = 0;
+            }
+            else
+            {
+                user.AuthenticateCode = Convert.ToInt32(code);
+                _dbContext.Users.Update(user);
+                await _dbContext.SaveChangesAsync();
+
+                string mobileNo = string.Empty;
+                if (identityUser.PhoneNumber != null && identityUser.PhoneNumber != "")
+                {
+                    mobileNo = identityUser.PhoneNumber.Length == 10 ? string.Format("{0}{1}", US_COUNTRY_CODE, identityUser.PhoneNumber) : string.Format("{0}", identityUser.PhoneNumber);
+                }
+
+                TwilioClient.Init(_twilioOptions.Value.AccountSid, _twilioOptions.Value.AuthToken);
+                try
+                {
+                    var messageOptions = new CreateMessageOptions(new PhoneNumber(mobileNo));
+                    messageOptions.From = new PhoneNumber(_twilioOptions.Value.FromPhoneNumber);
+                    messageOptions.Body = string.Format("Following is your Authentication code: {0}. Please use this code to login into management portal.", user.AuthenticateCode);
+
+                    MessageResource.Create(messageOptions);
+
+                    result.Id = user.Id;
+
+                    _logger.LogInformation($"Sent 2FA code {user.AuthenticateCode} to user {user.FirstName} {user.LastName} on phone number {mobileNo}");
+                }
+                catch (Exception e)
+                {
+                    _logger.LogError(e, $"There was an error while sending 2FA code {user.AuthenticateCode} to user {user.FirstName} {user.LastName} on phone number {mobileNo}");
+                }
+            }
+
+            return result;
+        }
+
+        public async Task<RequestResult<int>> ValidateAuthenticationCode(int code, int userId)
+        {
+            var res = new RequestResult<int>();
+            var result = await _dbContext.Users.Where(u => u.AuthenticateCode == code && u.Id == userId).FirstOrDefaultAsync();
+            res.Id = result != null ? code : 0;
+
+            return res;
+        }
+    }
+}
